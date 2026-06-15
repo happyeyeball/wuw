@@ -1,0 +1,5 @@
+wuw.db
+wuw.log
+config.ini
+__pycache__/
+*.pyc
