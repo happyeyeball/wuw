@@ -186,6 +186,13 @@ def run_checks(cfg, conn):
 # Sub-commands
 # ---------------------------------------------------------------------------
 
+def cmd_test_email(cfg):
+    """Send a test email to verify SMTP settings."""
+    print(f"Sending test email to {cfg.get('email', 'to_address')}...")
+    send_email(cfg, "WUW Test Email", "WUW email is configured correctly.")
+    print("Done — check your inbox. Any SMTP errors appear above.")
+
+
 def cmd_check(args, cfg):
     """Quick single-URL check — no database needed."""
     timeout = cfg.getint("monitoring", "timeout_seconds", fallback=10)
@@ -288,8 +295,14 @@ def main():
 
     sub.add_parser("run", help="Run all checks — cron entry point")
 
+    sub.add_parser("test-email", help="Send a test email to verify SMTP settings")
+
     args = parser.parse_args()
     cfg  = load_config()
+
+    if args.command == "test-email":
+        cmd_test_email(cfg)
+        return
 
     if args.command == "check":
         cmd_check(args, cfg)
