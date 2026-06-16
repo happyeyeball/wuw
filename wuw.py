@@ -66,6 +66,14 @@ def init_db(conn):
             error       TEXT,
             FOREIGN KEY (website_id) REFERENCES websites(id)
         );
+        CREATE TABLE IF NOT EXISTS recipients (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            website_id INTEGER NOT NULL,
+            name       TEXT NOT NULL,
+            email      TEXT NOT NULL,
+            active     INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (website_id) REFERENCES websites(id)
+        );
     """)
     conn.commit()
 
@@ -94,12 +102,13 @@ def check_site(url, timeout):
 # Email
 # ---------------------------------------------------------------------------
 
-def send_email(cfg, subject, body):
+def send_email(cfg, subject, body, to_address=None):
     try:
+        to = to_address or cfg.get("email", "to_address")
         msg = MIMEText(body)
         msg["Subject"] = subject
         msg["From"]    = cfg.get("email", "from_address")
-        msg["To"]      = cfg.get("email", "to_address")
+        msg["To"]      = to
         host = cfg.get("email", "smtp_host")
         port = cfg.getint("email", "smtp_port")
         user = cfg.get("email", "smtp_user")
@@ -108,9 +117,21 @@ def send_email(cfg, subject, body):
             smtp.starttls()
             smtp.login(user, pw)
             smtp.send_message(msg)
-        log.info("Email sent: %s", subject)
+        log.info("Email sent to %s: %s", to, subject)
     except Exception as e:
-        log.error("Email failed: %s", e)
+        log.error("Email failed to %s: %s", to_address or "default", e)
+
+
+def notify_recipients(cfg, conn, website_id, subject, body):
+    """Send to all active recipients for a site, fall back to config to_address."""
+    rows = conn.execute(
+        "SELECT email FROM recipients WHERE website_id=? AND active=1", (website_id,)
+    ).fetchall()
+    if rows:
+        for r in rows:
+            send_email(cfg, subject, body, r["email"])
+    else:
+        send_email(cfg, subject, body)
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +182,7 @@ def run_checks(cfg, conn):
                 f"Error:     {error or 'N/A'}\n"
                 f"Detected:  {now} UTC\n"
             )
-            send_email(cfg, subject, body)
+            notify_recipients(cfg, conn, site["id"], subject, body)
             log.warning("DOWN: %s (%s) code=%s", name, url, code_s)
 
         elif status == "up" and prev == "down":
@@ -174,7 +195,7 @@ def run_checks(cfg, conn):
                 f"Response:  {ms}ms\n"
                 f"Recovered: {now} UTC\n"
             )
-            send_email(cfg, subject, body)
+            notify_recipients(cfg, conn, site["id"], subject, body)
             log.info("RECOVERED: %s (%s) code=%s %dms", name, url, code_s, ms)
 
         else:
@@ -238,6 +259,50 @@ def cmd_list(conn):
               f"{s['name']:<25} {(s['last_checked'] or 'never'):<22} {s['url']}")
 
 
+def cmd_add_recipient(args, conn):
+    site = conn.execute("SELECT id, name FROM websites WHERE id=?", (args.site_id,)).fetchone()
+    if not site:
+        print(f"No website with id {args.site_id}")
+        return
+    conn.execute(
+        "INSERT INTO recipients (website_id, name, email) VALUES (?,?,?)",
+        (args.site_id, args.name, args.email),
+    )
+    conn.commit()
+    print(f"Added recipient: {args.name} <{args.email}> -> {site['name']}")
+
+
+def cmd_remove_recipient(args, conn):
+    row = conn.execute("SELECT id, name, email FROM recipients WHERE id=?", (args.id,)).fetchone()
+    if not row:
+        print(f"No recipient with id {args.id}")
+        return
+    conn.execute("UPDATE recipients SET active=0 WHERE id=?", (args.id,))
+    conn.commit()
+    print(f"Deactivated: {row['name']} <{row['email']}>")
+
+
+def cmd_list_recipients(args, conn):
+    if args.site_id:
+        rows = conn.execute(
+            "SELECT r.id, r.name, r.email, r.active, w.name as site FROM recipients r"
+            " JOIN websites w ON w.id=r.website_id WHERE r.website_id=? ORDER BY r.id",
+            (args.site_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT r.id, r.name, r.email, r.active, w.name as site FROM recipients r"
+            " JOIN websites w ON w.id=r.website_id ORDER BY r.website_id, r.id"
+        ).fetchall()
+    if not rows:
+        print("No recipients found.")
+        return
+    print(f"{'ID':<4} {'Active':<7} {'Site':<25} {'Name':<20} Email")
+    print("-" * 90)
+    for r in rows:
+        print(f"{r['id']:<4} {'yes' if r['active'] else 'no':<7} {r['site']:<25} {r['name']:<20} {r['email']}")
+
+
 def cmd_history(args, conn):
     row = conn.execute("SELECT id, name FROM websites WHERE url=?", (args.url,)).fetchone()
     if not row:
@@ -297,6 +362,17 @@ def main():
 
     sub.add_parser("test-email", help="Send a test email to verify SMTP settings")
 
+    p_addr = sub.add_parser("add-recipient", help="Add an email recipient for a site")
+    p_addr.add_argument("site_id", type=int, help="Website ID (from list command)")
+    p_addr.add_argument("email")
+    p_addr.add_argument("name")
+
+    p_rmr = sub.add_parser("remove-recipient", help="Deactivate a recipient")
+    p_rmr.add_argument("id", type=int, help="Recipient ID (from list-recipients)")
+
+    p_lsr = sub.add_parser("list-recipients", help="List recipients")
+    p_lsr.add_argument("site_id", type=int, nargs="?", help="Filter by website ID")
+
     args = parser.parse_args()
     cfg  = load_config()
 
@@ -321,6 +397,12 @@ def main():
         cmd_list(conn)
     elif args.command == "history":
         cmd_history(args, conn)
+    elif args.command == "add-recipient":
+        cmd_add_recipient(args, conn)
+    elif args.command == "remove-recipient":
+        cmd_remove_recipient(args, conn)
+    elif args.command == "list-recipients":
+        cmd_list_recipients(args, conn)
     elif args.command in ("run", None):
         run_checks(cfg, conn)
 
