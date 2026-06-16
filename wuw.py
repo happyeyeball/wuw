@@ -67,15 +67,60 @@ def init_db(conn):
             FOREIGN KEY (website_id) REFERENCES websites(id)
         );
         CREATE TABLE IF NOT EXISTS recipients (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            website_id INTEGER NOT NULL,
-            name       TEXT NOT NULL,
-            email      TEXT NOT NULL,
-            active     INTEGER NOT NULL DEFAULT 1,
-            FOREIGN KEY (website_id) REFERENCES websites(id)
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            name   TEXT NOT NULL,
+            email  TEXT NOT NULL UNIQUE,
+            active INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE TABLE IF NOT EXISTS website_recipients (
+            website_id   INTEGER NOT NULL,
+            recipient_id INTEGER NOT NULL,
+            PRIMARY KEY (website_id, recipient_id),
+            FOREIGN KEY (website_id)   REFERENCES websites(id),
+            FOREIGN KEY (recipient_id) REFERENCES recipients(id)
         );
     """)
     conn.commit()
+
+
+def migrate(conn):
+    """Migrate from old recipients schema (with website_id) to normalised schema."""
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "website_recipients" in tables:
+        print("Already on current schema, nothing to migrate.")
+        return
+
+    print("Migrating recipients schema...")
+    conn.executescript("""
+        ALTER TABLE recipients RENAME TO recipients_old;
+
+        CREATE TABLE recipients (
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            name   TEXT NOT NULL,
+            email  TEXT NOT NULL UNIQUE,
+            active INTEGER NOT NULL DEFAULT 1
+        );
+
+        CREATE TABLE website_recipients (
+            website_id   INTEGER NOT NULL,
+            recipient_id INTEGER NOT NULL,
+            PRIMARY KEY (website_id, recipient_id),
+            FOREIGN KEY (website_id)   REFERENCES websites(id),
+            FOREIGN KEY (recipient_id) REFERENCES recipients(id)
+        );
+
+        INSERT INTO recipients (name, email, active)
+            SELECT DISTINCT name, email, active FROM recipients_old;
+
+        INSERT INTO website_recipients (website_id, recipient_id)
+            SELECT ro.website_id, r.id
+            FROM recipients_old ro
+            JOIN recipients r ON r.email = ro.email;
+
+        DROP TABLE recipients_old;
+    """)
+    conn.commit()
+    print("Migration complete.")
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +170,10 @@ def send_email(cfg, subject, body, to_address=None):
 def notify_recipients(cfg, conn, website_id, subject, body):
     """Send to all active recipients for a site, fall back to config to_address."""
     rows = conn.execute(
-        "SELECT email FROM recipients WHERE website_id=? AND active=1", (website_id,)
+        "SELECT r.email FROM recipients r"
+        " JOIN website_recipients wr ON wr.recipient_id = r.id"
+        " WHERE wr.website_id = ? AND r.active = 1",
+        (website_id,),
     ).fetchall()
     if rows:
         for r in rows:
@@ -208,14 +256,12 @@ def run_checks(cfg, conn):
 # ---------------------------------------------------------------------------
 
 def cmd_test_email(cfg):
-    """Send a test email to verify SMTP settings."""
     print(f"Sending test email to {cfg.get('email', 'to_address')}...")
     send_email(cfg, "WUW Test Email", "WUW email is configured correctly.")
     print("Done — check your inbox. Any SMTP errors appear above.")
 
 
 def cmd_check(args, cfg):
-    """Quick single-URL check — no database needed."""
     timeout = cfg.getint("monitoring", "timeout_seconds", fallback=10)
     status, code, ms, error = check_site(args.url, timeout)
     print(f"URL:    {args.url}")
@@ -260,16 +306,33 @@ def cmd_list(conn):
 
 
 def cmd_add_recipient(args, conn):
-    site = conn.execute("SELECT id, name FROM websites WHERE id=?", (args.site_id,)).fetchone()
-    if not site:
-        print(f"No website with id {args.site_id}")
-        return
-    conn.execute(
-        "INSERT INTO recipients (website_id, name, email) VALUES (?,?,?)",
-        (args.site_id, args.name, args.email),
-    )
-    conn.commit()
-    print(f"Added recipient: {args.name} <{args.email}> -> {site['name']}")
+    """Add a recipient (find or create), then link to a site."""
+    row = conn.execute("SELECT id FROM recipients WHERE email=?", (args.email,)).fetchone()
+    if row:
+        rec_id = row["id"]
+        print(f"Recipient already exists: {args.email}")
+    else:
+        cur = conn.execute(
+            "INSERT INTO recipients (name, email) VALUES (?,?)", (args.name, args.email)
+        )
+        rec_id = cur.lastrowid
+        conn.commit()
+        print(f"Created recipient: {args.name} <{args.email}>")
+
+    if args.site_id:
+        site = conn.execute("SELECT name FROM websites WHERE id=?", (args.site_id,)).fetchone()
+        if not site:
+            print(f"No website with id {args.site_id}")
+            return
+        try:
+            conn.execute(
+                "INSERT INTO website_recipients (website_id, recipient_id) VALUES (?,?)",
+                (args.site_id, rec_id),
+            )
+            conn.commit()
+            print(f"Linked to: {site['name']}")
+        except sqlite3.IntegrityError:
+            print(f"Already linked to: {site['name']}")
 
 
 def cmd_remove_recipient(args, conn):
@@ -282,25 +345,52 @@ def cmd_remove_recipient(args, conn):
     print(f"Deactivated: {row['name']} <{row['email']}>")
 
 
+def cmd_link(args, conn):
+    site = conn.execute("SELECT name FROM websites WHERE id=?", (args.site_id,)).fetchone()
+    rec  = conn.execute("SELECT name, email FROM recipients WHERE id=?", (args.recipient_id,)).fetchone()
+    if not site:
+        print(f"No website with id {args.site_id}")
+        return
+    if not rec:
+        print(f"No recipient with id {args.recipient_id}")
+        return
+    try:
+        conn.execute(
+            "INSERT INTO website_recipients (website_id, recipient_id) VALUES (?,?)",
+            (args.site_id, args.recipient_id),
+        )
+        conn.commit()
+        print(f"Linked: {rec['name']} <{rec['email']}> -> {site['name']}")
+    except sqlite3.IntegrityError:
+        print(f"Already linked.")
+
+
+def cmd_unlink(args, conn):
+    conn.execute(
+        "DELETE FROM website_recipients WHERE website_id=? AND recipient_id=?",
+        (args.site_id, args.recipient_id),
+    )
+    conn.commit()
+    print("Unlinked.")
+
+
 def cmd_list_recipients(args, conn):
-    if args.site_id:
-        rows = conn.execute(
-            "SELECT r.id, r.name, r.email, r.active, w.name as site FROM recipients r"
-            " JOIN websites w ON w.id=r.website_id WHERE r.website_id=? ORDER BY r.id",
-            (args.site_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT r.id, r.name, r.email, r.active, w.name as site FROM recipients r"
-            " JOIN websites w ON w.id=r.website_id ORDER BY r.website_id, r.id"
-        ).fetchall()
+    rows = conn.execute(
+        "SELECT r.id, r.name, r.email, r.active,"
+        " GROUP_CONCAT(w.name, ', ') as sites"
+        " FROM recipients r"
+        " LEFT JOIN website_recipients wr ON wr.recipient_id = r.id"
+        " LEFT JOIN websites w ON w.id = wr.website_id"
+        " GROUP BY r.id ORDER BY r.id"
+    ).fetchall()
     if not rows:
         print("No recipients found.")
         return
-    print(f"{'ID':<4} {'Active':<7} {'Site':<25} {'Name':<20} Email")
-    print("-" * 90)
+    print(f"{'ID':<4} {'Active':<7} {'Name':<20} {'Email':<35} Sites")
+    print("-" * 100)
     for r in rows:
-        print(f"{r['id']:<4} {'yes' if r['active'] else 'no':<7} {r['site']:<25} {r['name']:<20} {r['email']}")
+        print(f"{r['id']:<4} {'yes' if r['active'] else 'no':<7} {r['name']:<20} "
+              f"{r['email']:<35} {r['sites'] or '(none)'}")
 
 
 def cmd_history(args, conn):
@@ -333,9 +423,12 @@ def main():
             "Examples:\n"
             "  wuw.py check https://example.com\n"
             "  wuw.py add https://example.com 'Example Site'\n"
+            "  wuw.py add-recipient jeffrey@example.com 'Jeffrey' --site 1\n"
+            "  wuw.py link 1 1\n"
             "  wuw.py list\n"
+            "  wuw.py list-recipients\n"
             "  wuw.py run\n"
-            "  wuw.py history https://example.com\n"
+            "  wuw.py migrate\n"
         ),
     )
     sub = parser.add_subparsers(dest="command")
@@ -357,21 +450,28 @@ def main():
     p_hist.add_argument("--limit", type=int, default=20)
 
     sub.add_parser("init-db", help="Initialize the database")
-
+    sub.add_parser("migrate", help="Migrate recipients to normalised schema")
     sub.add_parser("run", help="Run all checks — cron entry point")
-
     sub.add_parser("test-email", help="Send a test email to verify SMTP settings")
 
-    p_addr = sub.add_parser("add-recipient", help="Add an email recipient for a site")
-    p_addr.add_argument("site_id", type=int, help="Website ID (from list command)")
+    p_addr = sub.add_parser("add-recipient", help="Add a recipient (and optionally link to a site)")
     p_addr.add_argument("email")
     p_addr.add_argument("name")
+    p_addr.add_argument("--site", dest="site_id", type=int, default=None,
+                        help="Website ID to link to")
 
     p_rmr = sub.add_parser("remove-recipient", help="Deactivate a recipient")
-    p_rmr.add_argument("id", type=int, help="Recipient ID (from list-recipients)")
+    p_rmr.add_argument("id", type=int)
 
-    p_lsr = sub.add_parser("list-recipients", help="List recipients")
-    p_lsr.add_argument("site_id", type=int, nargs="?", help="Filter by website ID")
+    p_link = sub.add_parser("link", help="Link a recipient to a site")
+    p_link.add_argument("site_id", type=int)
+    p_link.add_argument("recipient_id", type=int)
+
+    p_unlink = sub.add_parser("unlink", help="Unlink a recipient from a site")
+    p_unlink.add_argument("site_id", type=int)
+    p_unlink.add_argument("recipient_id", type=int)
+
+    sub.add_parser("list-recipients", help="List all recipients and their linked sites")
 
     args = parser.parse_args()
     cfg  = load_config()
@@ -389,6 +489,8 @@ def main():
 
     if args.command == "init-db":
         print("Database initialized.")
+    elif args.command == "migrate":
+        migrate(conn)
     elif args.command == "add":
         cmd_add(args, conn)
     elif args.command == "remove":
@@ -401,6 +503,10 @@ def main():
         cmd_add_recipient(args, conn)
     elif args.command == "remove-recipient":
         cmd_remove_recipient(args, conn)
+    elif args.command == "link":
+        cmd_link(args, conn)
+    elif args.command == "unlink":
+        cmd_unlink(args, conn)
     elif args.command == "list-recipients":
         cmd_list_recipients(args, conn)
     elif args.command in ("run", None):
