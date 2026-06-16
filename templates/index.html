@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">Monitored Sites</h5>
+  <a href="/sites/add" class="btn btn-primary btn-sm">+ Add Site</a>
+</div>
+<div class="card shadow-sm">
+  <table class="table table-hover mb-0">
+    <thead class="table-dark">
+      <tr>
+        <th>Site</th>
+        <th>URL</th>
+        <th>Status</th>
+        <th>Last Checked</th>
+        <th>Recipients</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in sites %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td><a href="{{ s.url }}" target="_blank" class="text-decoration-none">{{ s.url }}</a></td>
+        <td>
+          {% if s.status == 'up' %}
+            <span class="status-up">&#9679; UP</span>
+          {% elif s.status == 'down' %}
+            <span class="status-down">&#9679; DOWN</span>
+          {% else %}
+            <span class="status-unknown">&#9679; —</span>
+          {% endif %}
+        </td>
+        <td class="text-muted small">{{ s.last_checked or '—' }}</td>
+        <td class="small">{{ s.recipients or '—' }}</td>
+        <td class="text-end">
+          <a href="/sites/{{ s.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+          <form method="post" action="/sites/{{ s.id }}/delete" class="d-inline"
+                onsubmit="return confirm('Remove {{ s.name }}?')">
+            <button class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">No sites configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-header bg-dark text-white">
+        {{ 'Edit Recipient' if recipient else 'Add Recipient' }}
+      </div>
+      <div class="card-body">
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label">Name</label>
+            <input type="text" name="name" class="form-control"
+                   value="{{ recipient.name if recipient else '' }}" required autofocus>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-control"
+                   value="{{ recipient.email if recipient else '' }}" required>
+          </div>
+          <div class="mb-4">
+            <label class="form-label">Monitored Sites</label>
+            {% for s in sites %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="site_ids"
+                     value="{{ s.id }}" id="site_{{ s.id }}"
+                     {{ 'checked' if s.id in linked_ids }}>
+              <label class="form-check-label" for="site_{{ s.id }}">{{ s.name }}</label>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Save</button>
+            <a href="/recipients" class="btn btn-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

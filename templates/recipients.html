@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 class="mb-0">Recipients</h5>
+  <a href="/recipients/add" class="btn btn-primary btn-sm">+ Add Recipient</a>
+</div>
+<div class="card shadow-sm">
+  <table class="table table-hover mb-0">
+    <thead class="table-dark">
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Sites</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in recipients %}
+      <tr>
+        <td>{{ r.name }}</td>
+        <td>{{ r.email }}</td>
+        <td class="small">{{ r.sites or '—' }}</td>
+        <td class="text-end">
+          <a href="/recipients/{{ r.id }}/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+          <form method="post" action="/recipients/{{ r.id }}/delete" class="d-inline"
+                onsubmit="return confirm('Remove {{ r.name }}?')">
+            <button class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="text-center text-muted py-4">No recipients configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
