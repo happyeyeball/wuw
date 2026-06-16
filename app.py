@@ -128,11 +128,12 @@ def recipient_add():
         name     = request.form['name'].strip()
         email    = request.form['email'].strip()
         site_ids = request.form.getlist('site_ids')
+        sms_email = request.form.get('sms_email', '').strip() or None
         if not name or not email:
             flash('Name and email are required.', 'danger')
         else:
             try:
-                cur    = conn.execute('INSERT INTO recipients (name, email) VALUES (?,?)', (name, email))
+                cur    = conn.execute('INSERT INTO recipients (name, email, sms_email) VALUES (?,?,?)', (name, email, sms_email))
                 rec_id = cur.lastrowid
                 for sid in site_ids:
                     conn.execute(
@@ -163,12 +164,13 @@ def recipient_edit(id):
     if request.method == 'POST':
         name     = request.form['name'].strip()
         email    = request.form['email'].strip()
-        site_ids = {int(s) for s in request.form.getlist('site_ids')}
+        site_ids  = {int(s) for s in request.form.getlist('site_ids')}
+        sms_email = request.form.get('sms_email', '').strip() or None
         if not name or not email:
             flash('Name and email are required.', 'danger')
         else:
             try:
-                conn.execute('UPDATE recipients SET name=?, email=? WHERE id=?', (name, email, id))
+                conn.execute('UPDATE recipients SET name=?, email=?, sms_email=? WHERE id=?', (name, email, sms_email, id))
                 for sid in site_ids - linked:
                     conn.execute(
                         'INSERT OR IGNORE INTO website_recipients (website_id, recipient_id) VALUES (?,?)',

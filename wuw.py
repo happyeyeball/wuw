@@ -67,10 +67,11 @@ def init_db(conn):
             FOREIGN KEY (website_id) REFERENCES websites(id)
         );
         CREATE TABLE IF NOT EXISTS recipients (
-            id     INTEGER PRIMARY KEY AUTOINCREMENT,
-            name   TEXT NOT NULL,
-            email  TEXT NOT NULL UNIQUE,
-            active INTEGER NOT NULL DEFAULT 1
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      TEXT NOT NULL,
+            email     TEXT NOT NULL UNIQUE,
+            sms_email TEXT,
+            active    INTEGER NOT NULL DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS website_recipients (
             website_id   INTEGER NOT NULL,
@@ -170,7 +171,7 @@ def send_email(cfg, subject, body, to_address=None):
 def notify_recipients(cfg, conn, website_id, subject, body):
     """Send to all active recipients for a site, fall back to config to_address."""
     rows = conn.execute(
-        "SELECT r.email FROM recipients r"
+        "SELECT r.email, r.sms_email FROM recipients r"
         " JOIN website_recipients wr ON wr.recipient_id = r.id"
         " WHERE wr.website_id = ? AND r.active = 1",
         (website_id,),
@@ -178,6 +179,8 @@ def notify_recipients(cfg, conn, website_id, subject, body):
     if rows:
         for r in rows:
             send_email(cfg, subject, body, r["email"])
+            if r["sms_email"]:
+                send_email(cfg, subject, body, r["sms_email"])
     else:
         send_email(cfg, subject, body)
 
@@ -386,11 +389,11 @@ def cmd_list_recipients(args, conn):
     if not rows:
         print("No recipients found.")
         return
-    print(f"{'ID':<4} {'Active':<7} {'Name':<20} {'Email':<35} Sites")
-    print("-" * 100)
+    print(f"{'ID':<4} {'Active':<7} {'Name':<20} {'Email':<35} {'SMS':<30} Sites")
+    print("-" * 115)
     for r in rows:
         print(f"{r['id']:<4} {'yes' if r['active'] else 'no':<7} {r['name']:<20} "
-              f"{r['email']:<35} {r['sites'] or '(none)'}")
+              f"{r['email']:<35} {(r['sms_email'] or ''):<30} {r['sites'] or '(none)'}")
 
 
 def cmd_history(args, conn):

@@ -18,6 +18,12 @@
             <input type="email" name="email" class="form-control"
                    value="{{ recipient.email if recipient else '' }}" required>
           </div>
+          <div class="mb-3">
+            <label class="form-label">SMS Email <span class="text-muted small">(e.g. 9149801793@vtext.com)</span></label>
+            <input type="email" name="sms_email" class="form-control"
+                   value="{{ recipient.sms_email if recipient and recipient.sms_email else '' }}"
+                   placeholder="number@vtext.com">
+          </div>
           <div class="mb-4">
             <label class="form-label">Monitored Sites</label>
             {% for s in sites %}
