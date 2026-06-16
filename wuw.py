@@ -379,7 +379,7 @@ def cmd_unlink(args, conn):
 
 def cmd_list_recipients(args, conn):
     rows = conn.execute(
-        "SELECT r.id, r.name, r.email, r.active,"
+        "SELECT r.id, r.name, r.email, r.sms_email, r.active,"
         " GROUP_CONCAT(w.name, ', ') as sites"
         " FROM recipients r"
         " LEFT JOIN website_recipients wr ON wr.recipient_id = r.id"
