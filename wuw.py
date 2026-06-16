@@ -85,8 +85,8 @@ def init_db(conn):
 
 def migrate(conn):
     """Migrate from old recipients schema (with website_id) to normalised schema."""
-    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    if "website_recipients" in tables:
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(recipients)").fetchall()]
+    if "website_id" not in cols:
         print("Already on current schema, nothing to migrate.")
         return
 
