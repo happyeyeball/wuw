@@ -226,7 +226,6 @@ def run_checks(cfg, conn):
         if status == "down" and prev != "down":
             subject = f"WUW ALERT: {name} is DOWN"
             body = (
-                f"Site:      {name}\n"
                 f"URL:       {url}\n"
                 f"Status:    DOWN\n"
                 f"HTTP Code: {code_s}\n"
@@ -239,7 +238,6 @@ def run_checks(cfg, conn):
         elif status == "up" and prev == "down":
             subject = f"WUW RECOVERY: {name} is back UP"
             body = (
-                f"Site:      {name}\n"
                 f"URL:       {url}\n"
                 f"Status:    UP\n"
                 f"HTTP Code: {code_s}\n"
